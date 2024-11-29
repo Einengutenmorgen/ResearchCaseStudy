@@ -1,3 +1,12 @@
 research/
 data
 .env
+.__pycache__
+.vscode
+Results
+src/__pycache__
+src/pipeline/__pycache__
+.storage
+environment.yml
+sampleoutputwithtoxandpol.pkl
+. 
