@@ -149,4 +149,55 @@ class Pipeline:
                             'user_id': persona_row['user_id'],
                             'original_post': desc_row['original_post'],
                             'neutral_description': desc_row['neutral_description'],
-                            'regenerated_post': regenerated_pos
+                            'regenerated_post': regenerated_post,
+                            'persona': persona_row['persona_analysis']
+                        })
+                        
+                    # Add delay every 3 requests to avoid rate limiting
+                    if len(regeneration_results) % 99 == 98:
+                        logger.info("Rate limit pause - waiting 60 seconds...")
+                        time.sleep(60)
+            
+            # Save regeneration results
+            regeneration_file = results_manager.save_results(regeneration_results)
+            logger.info(f"Saved {len(regeneration_results)} regenerated posts to {regeneration_file}")
+            
+            logger.info("Pipeline completed successfully!")
+            return {
+                'posts_file': posts_file,
+                'replies_file': replies_file,
+                'descriptions_file': descriptions_file,
+                'analyses_file': analyses_file,
+                'regeneration_file': regeneration_file
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in pipeline execution: {e}")
+            raise
+
+def main():
+    parser = argparse.ArgumentParser(description='Run the complete analysis pipeline')
+    parser.add_argument('--input', '-i', 
+                      type=str,
+                      default='data/tweets.csv',
+                      help='Path to input CSV file (default: data/tweets.csv)')
+    parser.add_argument('--output', '-o',
+                      type=str,
+                      help='Output directory path (optional)')
+    
+    args = parser.parse_args()
+    
+    try:
+        pipeline = Pipeline(args.input, args.output)
+        results = pipeline.run()
+        
+        logger.info("Pipeline results:")
+        for key, value in results.items():
+            logger.info(f"{key}: {value}")
+            
+    except Exception as e:
+        logger.error(f"Pipeline failed: {e}")
+        raise
+
+if __name__ == "__main__":
+    main()

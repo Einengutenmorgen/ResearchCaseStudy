@@ -233,4 +233,4 @@ Additional Guidelines:
             
         except Exception as e:
             logger.error(f"Error generating description: {e}")
-            return
+            return None
