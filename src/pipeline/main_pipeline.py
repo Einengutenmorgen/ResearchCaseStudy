@@ -12,6 +12,7 @@ from prompt_formatter import PromptFormatter
 from openai_analyzer import OpenAIAnalyzer
 from enhanced_neutral_generator import EnhancedNeutralDescriptionGenerator, GeneratorConfig, DescriptionStyle, OutputFormat
 from post_regenerator import PostRegenerator, RegenerationResultsManager
+from rouge_evaluator import RougeEvaluator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +35,7 @@ class Pipeline:
         self.preprocessor = DataPreprocessor(input_file)
         self.data_processor = DataProcessor(input_file)
         self.openai_analyzer = OpenAIAnalyzer()
+        self.evaluator = RougeEvaluator()  # Initialize the ROUGE evaluator
         
         # Configure enhanced neutral description generator
         config = GeneratorConfig(
@@ -135,6 +137,10 @@ class Pipeline:
             results_manager = RegenerationResultsManager(self.output_dir)
             regeneration_results = []
             
+            # Collect all pairs for batch evaluation
+            original_posts = []
+            regenerated_posts = []
+            
             for _, persona_row in analyses_df.iterrows():
                 user_descriptions = descriptions_df[descriptions_df['user_id'] == persona_row['user_id']]
                 
@@ -145,6 +151,8 @@ class Pipeline:
                     )
                     
                     if regenerated_post:
+                        original_posts.append(desc_row['original_post'])
+                        regenerated_posts.append(regenerated_post)
                         regeneration_results.append({
                             'user_id': persona_row['user_id'],
                             'original_post': desc_row['original_post'],
@@ -158,7 +166,21 @@ class Pipeline:
                         logger.info("Rate limit pause - waiting 60 seconds...")
                         time.sleep(60)
             
-            # Save regeneration results
+            # Calculate ROUGE scores
+            logger.info("Calculating ROUGE scores for regenerated posts")
+            rouge_scores = self.evaluator.evaluate_batch(original_posts, regenerated_posts)
+            
+            # Add ROUGE scores to results
+            for result, scores in zip(regeneration_results, rouge_scores):
+                result['rouge_scores'] = scores
+            
+            # Calculate and log aggregate ROUGE scores
+            aggregate_scores = self.evaluator.aggregate_scores(rouge_scores)
+            logger.info("Aggregate ROUGE scores:")
+            for metric, scores in aggregate_scores.items():
+                logger.info(f"{metric}: {scores}")
+            
+            # Save regeneration results with ROUGE scores
             regeneration_file = results_manager.save_results(regeneration_results)
             logger.info(f"Saved {len(regeneration_results)} regenerated posts to {regeneration_file}")
             
