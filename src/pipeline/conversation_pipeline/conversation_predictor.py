@@ -1,17 +1,26 @@
 import json
 import logging
 import os
+import sys
 from pathlib import Path
+
+# Add parent directory to Python path for imports
+sys.path.append(str(Path(__file__).parent.parent))
+
 from typing import Dict, List, Tuple, Optional, Set
+import numpy as np
 import pandas as pd
 from datetime import datetime
 import openai
 from dotenv import load_dotenv
 from rouge_score import rouge_scorer
-from user_post_collector import UserPostCollector
-from persona_manager import PersonaManager
 from tqdm import tqdm
 
+# Local imports
+from similarity_analyzer import SimilarityAnalyzer, SimilarityMetric
+from rouge_evaluator import RougeEvaluator
+from conversation_pipeline.user_post_collector import UserPostCollector
+from conversation_pipeline.persona_manager import PersonaManager
 
 # Load environment variables
 load_dotenv()
@@ -41,7 +50,7 @@ class ConversationFilter:
             List of filtered conversations with held out messages
         """
         filtered_convs = []
-        conv_dir = Path(conv_directory) / "batch_chunk_0000"
+        conv_dir = Path(conv_directory)
         logger.info(f"Looking for conversations in {conv_dir}")
         
         if not conv_dir.exists():
@@ -195,32 +204,153 @@ class MessageGenerator:
             logger.error(f"Error generating message: {str(e)}")
             raise
 
-class ResponseEvaluator:
-    def __init__(self):
-        """Initialize the ResponseEvaluator."""
-        self.scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
+class ComprehensiveEvaluator:
+    """Evaluator class that combines ROUGE metrics and similarity analysis."""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize the ComprehensiveEvaluator with all necessary components."""
+        self.rouge_evaluator = RougeEvaluator()
+        self.similarity_analyzer = SimilarityAnalyzer()
         
-    def evaluate_response(self, generated: str, ground_truth: str) -> Dict:
+    def evaluate_response(self, generated: str, ground_truth: str, conversation_context: Optional[str] = None) -> Dict:
         """
-        Evaluate the generated response against ground truth.
+        Evaluate the generated response using all available metrics.
         
         Args:
             generated: Generated message
             ground_truth: Actual next message
+            conversation_context: Optional context for LLM evaluation
             
         Returns:
-            Dictionary of evaluation metrics
+            Dictionary containing all evaluation metrics
         """
-        # Calculate ROUGE scores
-        scores = self.scorer.score(ground_truth, generated)
+        try:
+            # Get ROUGE scores
+            rouge_scores = self.rouge_evaluator.calculate_rouge_scores(ground_truth, generated)
+            
+            # Get similarity analysis (including LLM judgment)
+            similarity_scores = self.similarity_analyzer.analyze_similarity(
+                original=ground_truth,
+                regenerated=generated,
+                neutral=conversation_context or "",  # Use empty string if no context
+                metrics=[SimilarityMetric.SEMANTIC, SimilarityMetric.COSINE, SimilarityMetric.LLM]
+            )
+            
+            # Combine all metrics
+            evaluation = {
+                "rouge_scores": rouge_scores,
+                "similarity_scores": {
+                    "semantic": similarity_scores.semantic_similarity,
+                    "cosine": similarity_scores.cosine_similarity,
+                    "llm": {
+                        "score": similarity_scores.llm_similarity,
+                        "explanation": similarity_scores.llm_explanation
+                    }
+                },
+                "combined_score": similarity_scores.combined_score,
+                "metadata": {
+                    "generated_length": len(generated.split()),
+                    "ground_truth_length": len(ground_truth.split())
+                }
+            }
+            
+            return evaluation
+            
+        except Exception as e:
+            logger.error(f"Error in comprehensive evaluation: {str(e)}")
+            return {
+                "error": str(e),
+                "rouge_scores": {},
+                "similarity_scores": {
+                    "semantic": 0.0,
+                    "cosine": 0.0,
+                    "llm": {"score": 0.0, "explanation": "Error in evaluation"}
+                },
+                "combined_score": 0.0,
+                "metadata": {
+                    "generated_length": len(generated.split()),
+                    "ground_truth_length": len(ground_truth.split())
+                }
+            }
+    
+    def evaluate_batch(self, generated_texts: List[str], ground_truths: List[str], 
+                      conversation_contexts: Optional[List[str]] = None) -> List[Dict]:
+        """
+        Evaluate a batch of generated responses.
         
-        return {
-            "rouge1_f": scores['rouge1'].fmeasure,
-            "rouge2_f": scores['rouge2'].fmeasure,
-            "rougeL_f": scores['rougeL'].fmeasure,
-            "generated_length": len(generated.split()),
-            "ground_truth_length": len(ground_truth.split())
-        }
+        Args:
+            generated_texts: List of generated messages
+            ground_truths: List of actual next messages
+            conversation_contexts: Optional list of conversation contexts
+            
+        Returns:
+            List of evaluation dictionaries
+        """
+        if conversation_contexts is None:
+            conversation_contexts = [""] * len(generated_texts)
+            
+        return [
+            self.evaluate_response(gen, truth, context)
+            for gen, truth, context in zip(generated_texts, ground_truths, conversation_contexts)
+        ]
+    
+    def aggregate_scores(self, evaluations: List[Dict]) -> Dict:
+        """
+        Aggregate evaluation scores across multiple responses.
+        
+        Args:
+            evaluations: List of evaluation dictionaries
+            
+        Returns:
+            Dictionary with aggregated scores
+        """
+        try:
+            # Extract ROUGE scores for aggregation
+            rouge_scores = []
+            semantic_scores = []
+            cosine_scores = []
+            llm_scores = []
+            combined_scores = []
+            
+            for eval_dict in evaluations:
+                if "rouge_scores" in eval_dict:
+                    rouge_scores.append(eval_dict["rouge_scores"])
+                if "similarity_scores" in eval_dict:
+                    sim_scores = eval_dict["similarity_scores"]
+                    semantic_scores.append(sim_scores.get("semantic", 0.0))
+                    cosine_scores.append(sim_scores.get("cosine", 0.0))
+                    llm_scores.append(sim_scores.get("llm", {}).get("score", 0.0))
+                if "combined_score" in eval_dict:
+                    combined_scores.append(eval_dict["combined_score"])
+            
+            # Aggregate ROUGE scores
+            aggregated_rouge = self.rouge_evaluator.aggregate_scores(rouge_scores)
+            
+            return {
+                "rouge_scores": aggregated_rouge,
+                "similarity_scores": {
+                    "semantic": {
+                        "mean": float(np.mean(semantic_scores)),
+                        "std": float(np.std(semantic_scores))
+                    },
+                    "cosine": {
+                        "mean": float(np.mean(cosine_scores)),
+                        "std": float(np.std(cosine_scores))
+                    },
+                    "llm": {
+                        "mean": float(np.mean(llm_scores)),
+                        "std": float(np.std(llm_scores))
+                    }
+                },
+                "combined_score": {
+                    "mean": float(np.mean(combined_scores)),
+                    "std": float(np.std(combined_scores))
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error aggregating scores: {str(e)}")
+            return {}
 
 class ResultsManager:
     def __init__(self, output_dir: str):
@@ -266,7 +396,7 @@ def main(conv_directory: str, data_file: str, output_dir: str, api_key: str):
     conv_filter = ConversationFilter(min_messages=4)
     prompt_gen = PromptGenerator()
     msg_gen = MessageGenerator(api_key)
-    evaluator = ResponseEvaluator()
+    evaluator = ComprehensiveEvaluator(api_key)
     results_mgr = ResultsManager(output_dir)
     
     # Process conversations
@@ -306,7 +436,8 @@ def main(conv_directory: str, data_file: str, output_dir: str, api_key: str):
             # Evaluate
             evaluation = evaluator.evaluate_response(
                 generated_msg,
-                conv["ground_truth"]["full_text"]
+                conv["ground_truth"]["full_text"],
+                prompt_gen._build_context(conv, conv_personas)
             )
             
             # Store results
