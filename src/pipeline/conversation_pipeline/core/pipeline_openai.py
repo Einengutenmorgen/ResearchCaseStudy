@@ -110,7 +110,7 @@ class OpenAIAnalyzer:
     def __init__(self, api_key: str = None):
         """Initialize OpenAI client with API key."""
         self.client = OpenAI(api_key=api_key or os.getenv('OPENAI_API_KEY'))
-        self.encoding = tiktoken.encoding_for_model("gpt-4")
+        self.encoding = tiktoken.encoding_for_model("gpt-4o")
         
     def count_tokens(self, messages: List[Dict[str, str]]) -> int:
         """Count the number of tokens in the messages."""
