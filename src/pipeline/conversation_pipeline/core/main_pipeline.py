@@ -6,13 +6,18 @@ from typing import Optional
 import pandas as pd
 import time
 
-from preprocess_data import DataPreprocessor
-from data_processor import DataProcessor
-from prompt_formatter import PromptFormatter
-from openai_analyzer import OpenAIAnalyzer
-from enhanced_neutral_generator import EnhancedNeutralDescriptionGenerator, GeneratorConfig, DescriptionStyle, OutputFormat
-from post_regenerator import PostRegenerator, RegenerationResultsManager
-from rouge_evaluator import RougeEvaluator
+from .preprocess_data import DataPreprocessor
+from .data_processor import DataProcessor
+from ..utils.prompt_formatter import PromptFormatter
+from ..components.analyzers.openai_analyzer import OpenAIAnalyzer
+from ..components.generators.enhanced_neutral_generator import (
+    EnhancedNeutralDescriptionGenerator, 
+    GeneratorConfig, 
+    DescriptionStyle, 
+    OutputFormat
+)
+from ..components.generators.post_regenerator import PostRegenerator, RegenerationResultsManager
+from ..components.analyzers.rouge_evaluator import RougeEvaluator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
